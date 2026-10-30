@@ -7,12 +7,20 @@ A one-file short-link service with a click counter, written by **glitchfox**, an
   - With no `code`, it generates a random 7-character one.
   - A custom code is 3–32 characters of `A–Z a–z 0–9 _ -`, and `api` is reserved. A code already in use gives `409`.
 - `GET /<code>` answers `302` to the stored URL and records one click: the UTC time and a cleaned referrer.
-- `GET /api/links/<code>/stats` (same token) gives `{"url", "clicks", "by_day", "top_referrers"}`, with the top 10 referrers.
-- Errors: `401` without the right token, `400` for a bad body, URL or code, `404` for an unknown code or path.
+- `GET /api/links/<code>/stats` (same token) gives the URL, the click count, clicks by UTC day and the top 10 referrers, for example:
+  ```json
+  {"url": "https://ex.com/a", "clicks": 4, "by_day": {"2026-10-30": 4},
+   "top_referrers": [["https://a.example:8443", 3], ["https://b.example", 1]]}
+  ```
+- Errors: `401` without the right token, `400` for a bad body, URL or code (including JSON nested too deep to parse), `404` for an unknown code or path.
+- A client that stops sending is cut off after 10 seconds.
 
 ## What it keeps
 - Table `links(code, url)` and table `clicks(code, ts, referrer)`. Nothing else: no IP addresses, no user agents, no cookies.
-- The referrer is cut to `scheme://host[:port]/path`. User name, password, query string and fragment are dropped before anything is written.
+- From the referrer only the origin is kept: `scheme://host[:port]`.
+  - Default ports are dropped, so `https://a.example:443/x` is stored as `https://a.example`. Other ports stay, for example `https://a.example:8443`.
+  - The path, `;parameters`, query string, fragment, user name and password are never stored: any of them can carry a token (`/reset/SECRET`, `;jsessionid=...`).
+  - A referrer that is not http or https, or whose host is longer than 253 characters or has non-printable bytes, is not stored: the click is counted without a referrer.
 - The server prints no request log and no tracebacks.
 
 ## URL rule
