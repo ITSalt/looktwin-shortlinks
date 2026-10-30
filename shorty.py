@@ -26,7 +26,12 @@ def valid_url(u):
 
 
 def clean_referer(r):
-    """scheme://host[:port]/path; no userinfo, query or fragment; else None."""
+    """Origin only: scheme://host[:port]. No userinfo, path, query or fragment.
+
+    Any path segment can carry a token (/reset/SECRET, ;jsessionid=...), so
+    nothing after the authority is ever stored. Default ports are dropped so
+    https://a and https://a:443 count as one referrer. Anything else -> None.
+    """
     if not r:
         return None
     try:
@@ -34,13 +39,16 @@ def clean_referer(r):
         port = p.port
     except ValueError:
         return None
-    if p.scheme.lower() not in ('http', 'https') or not p.hostname:
+    scheme, host = p.scheme.lower(), p.hostname
+    if scheme not in ('http', 'https') or not host:
         return None
-    host = p.hostname
+    if len(host) > 253 or any(not 0x21 <= ord(ch) <= 0x7e for ch in host):
+        return None
     if ':' in host:
         host = '[' + host + ']'
-    return '%s://%s%s%s' % (p.scheme.lower(), host,
-                            ':%d' % port if port is not None else '', p.path)
+    if port == {'http': 80, 'https': 443}[scheme]:
+        port = None
+    return '%s://%s%s' % (scheme, host, ':%d' % port if port is not None else '')
 
 
 class Shorty(ThreadingHTTPServer):
@@ -67,6 +75,8 @@ class Shorty(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
+    timeout = 10
+
     def log_message(self, *a):
         pass
 
@@ -102,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(401, {'error': 'unauthorized'})
         try:
             data = json.loads(raw.decode('utf-8'))
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             data = None
         if not isinstance(data, dict) or not valid_url(data.get('url')):
             return self.reply(400, {'error': 'bad url'})

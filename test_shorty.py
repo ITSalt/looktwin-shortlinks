@@ -29,6 +29,11 @@ class ShortyTest(unittest.TestCase):
         body = {'url': url} if code is None else {'url': url, 'code': code}
         return self.req('POST', '/api/links', body, H)
 
+    def test_deep_nesting_is_400(self):
+        deep = '[' * 100000 + ']' * 100000
+        for body in [deep, '{"url": %s}' % deep, '{"url": "https://x.io", "code": %s}' % deep]:
+            self.assertEqual(self.req('POST', '/api/links', body, H)[0], 400)
+
     def test_create_and_statuses(self):
         self.assertEqual(self.req('POST', '/api/links', {'url': 'https://x.io'})[0], 401)
         self.assertEqual(self.req('POST', '/api/links', {'url': 'https://x.io'},
@@ -64,7 +69,7 @@ class ShortyTest(unittest.TestCase):
         self.assertEqual(s, 200)
         self.assertEqual(b['clicks'], 5)
         self.assertEqual(sum(b['by_day'].values()), 5)
-        self.assertEqual(b['top_referrers'], [['https://a.example:8443/p', 3]])
+        self.assertEqual(b['top_referrers'], [['https://a.example:8443', 3]])
         for suffix in ('', '-wal', '-journal'):
             if os.path.exists(self.db + suffix):
                 with open(self.db + suffix, 'rb') as fh:
@@ -80,16 +85,34 @@ class ShortyTest(unittest.TestCase):
         self.make('https://ex.com', 'abc')
         for i, n in enumerate([1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1]):
             for _ in range(n):
-                self.req('GET', '/abc', headers={'Referer': 'http://r%02d.example/' % i})
+                self.req('GET', '/abc', headers={'Referer': 'http://r%02d.example/path/%d' % (i, i)})
         top = self.req('GET', '/api/links/abc/stats', headers=H)[1]['top_referrers']
-        self.assertEqual(top[:2], [['http://r01.example/', 2], ['http://r02.example/', 2]])
+        self.assertEqual(top[:2], [['http://r01.example', 2], ['http://r02.example', 2]])
         self.assertEqual(len(top), 10)
-        self.assertEqual(top[2][0], 'http://r00.example/')
+        self.assertEqual(top[2][0], 'http://r00.example')
 
     def test_clean_referer(self):
         f = shorty.clean_referer
-        self.assertIsNone(f(None)); self.assertIsNone(f('ftp://a/b')); self.assertIsNone(f('http://a:99999/'))
-        self.assertEqual(f('HTTP://u@A.Example/x;y?q#f'), 'http://a.example/x;y')
+        for bad in (None, '', 'ftp://a/b', 'http://a:99999/', 'javascript:alert(1)',
+                    'http:///x', 'https://a\x01b.example/', 'https://' + 'a' * 300 + '/'):
+            self.assertIsNone(f(bad), bad)
+        self.assertEqual(f('HTTP://u:pw@A.Example/x;y?q#f'), 'http://a.example')
+        self.assertEqual(f('https://a.example:8443/p;jsessionid=SECRET'), 'https://a.example:8443')
+        self.assertEqual(f('https://a.example/reset/SECRET'), 'https://a.example')
+        self.assertEqual(f('https://a.example/' + 'x' * 60000), 'https://a.example')
+        self.assertEqual(f('https://a.example/p\x01'), 'https://a.example')
+        self.assertEqual(f('https://a.example:443/x'), 'https://a.example')
+        self.assertEqual(f('http://a.example:80'), 'http://a.example')
+        self.assertEqual(f('http://[::1]:8080/x'), 'http://[::1]:8080')
+
+    def test_no_path_reaches_db(self):
+        self.make('https://ex.com', 'abc')
+        for p in ('reset/SECRET', 'p;jsessionid=SECRET', 'SECRET' * 9999, 'SECRET\x01'):
+            self.req('GET', '/abc', headers={'Referer': 'https://a.example/' + p})
+        c = sqlite3.connect(self.db)
+        self.assertEqual(c.execute('SELECT referrer, COUNT(*) FROM clicks GROUP BY 1')
+                         .fetchall(), [('https://a.example', 4)])
+        c.close()
 
     def test_cli_token_and_silence(self):
         env = dict(os.environ); env.pop('SHORTY_TOKEN', None)
