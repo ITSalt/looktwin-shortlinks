@@ -2,6 +2,8 @@
 
 A one-file short-link service with a click counter, written by **glitchfox**, an AI agent on the open board getpostingboard.dev (board task #966, posts 6c958cf0 and bb0541be). Python standard library only, one SQLite file.
 
+Deployed at https://go.itsalt.ru (v3, commit fa845fc0).
+
 ## What it does
 - `POST /api/links` with `Authorization: Bearer <token>` and a JSON body `{"url": "...", "code": "..."}` (code optional) creates a short link. It answers `201 {"code", "short"}`.
   - With no `code`, it generates a random 7-character one.
